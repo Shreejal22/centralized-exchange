@@ -7,6 +7,7 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(
@@ -26,6 +27,13 @@ public class Order {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+    @Column(
+            name = "matching_id",
+            nullable = false,
+            updatable = false,
+            columnDefinition = "uuid"
+    )
+    private UUID matchingId;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
@@ -83,10 +91,14 @@ public class Order {
 
         createdAt = now;
         updatedAt = now;
+        if (matchingId == null) {
+            matchingId = UUID.randomUUID();
+        }
     }
 
     @PreUpdate
     protected void onUpdate() {
         updatedAt = Instant.now();
     }
+
 }

@@ -1,4 +1,5 @@
-package com.shreejal.exchange.matching;
+
+        package com.shreejal.exchange.matching;
 
 import org.junit.jupiter.api.Test;
 
@@ -11,11 +12,10 @@ class OrderBookTest {
 
     @Test
     void testBestBid() {
-
         OrderBook book = new OrderBook("BTC/USDT");
 
         MatchingOrder order = new MatchingOrder(
-                UUID.randomUUID(),
+                1L,
                 UUID.randomUUID(),
                 "BTC/USDT",
                 OrderSide.BUY,
@@ -30,19 +30,15 @@ class OrderBookTest {
 
         PriceLevel bestBid = book.getBestBid();
 
-        assertEquals(
-                new BigDecimal("100"),
-                bestBid.getPrice()
-        );
+        assertEquals(new BigDecimal("100"), bestBid.getPrice());
     }
 
     @Test
     void bestBidShouldBeHighestPrice() {
-
         OrderBook book = new OrderBook("BTC/USDT");
 
         MatchingOrder order100 = new MatchingOrder(
-                UUID.randomUUID(),
+                1L,
                 UUID.randomUUID(),
                 "BTC/USDT",
                 OrderSide.BUY,
@@ -54,7 +50,7 @@ class OrderBookTest {
         );
 
         MatchingOrder order105 = new MatchingOrder(
-                UUID.randomUUID(),
+                2L,
                 UUID.randomUUID(),
                 "BTC/USDT",
                 OrderSide.BUY,
@@ -66,7 +62,7 @@ class OrderBookTest {
         );
 
         MatchingOrder order102 = new MatchingOrder(
-                UUID.randomUUID(),
+                3L,
                 UUID.randomUUID(),
                 "BTC/USDT",
                 OrderSide.BUY,
@@ -81,19 +77,15 @@ class OrderBookTest {
         book.addOrder(order105);
         book.addOrder(order102);
 
-        assertEquals(
-                new BigDecimal("105"),
-                book.getBestBid().getPrice()
-        );
+        assertEquals(new BigDecimal("105"), book.getBestBid().getPrice());
     }
 
     @Test
     void bestAskShouldBeLowestPrice() {
-
         OrderBook book = new OrderBook("BTC/USDT");
 
         MatchingOrder order105 = new MatchingOrder(
-                UUID.randomUUID(),
+                1L,
                 UUID.randomUUID(),
                 "BTC/USDT",
                 OrderSide.SELL,
@@ -105,7 +97,7 @@ class OrderBookTest {
         );
 
         MatchingOrder order101 = new MatchingOrder(
-                UUID.randomUUID(),
+                2L,
                 UUID.randomUUID(),
                 "BTC/USDT",
                 OrderSide.SELL,
@@ -117,7 +109,7 @@ class OrderBookTest {
         );
 
         MatchingOrder order103 = new MatchingOrder(
-                UUID.randomUUID(),
+                3L,
                 UUID.randomUUID(),
                 "BTC/USDT",
                 OrderSide.SELL,
@@ -132,18 +124,15 @@ class OrderBookTest {
         book.addOrder(order101);
         book.addOrder(order103);
 
-        assertEquals(
-                new BigDecimal("101"),
-                book.getBestAsk().getPrice()
-        );
+        assertEquals(new BigDecimal("101"), book.getBestAsk().getPrice());
     }
+
     @Test
     void ordersAtSamePriceShouldFollowTimePriority() {
-
         OrderBook book = new OrderBook("BTC/USDT");
 
         MatchingOrder firstOrder = new MatchingOrder(
-                UUID.randomUUID(),
+                1L,
                 UUID.randomUUID(),
                 "BTC/USDT",
                 OrderSide.BUY,
@@ -155,7 +144,7 @@ class OrderBookTest {
         );
 
         MatchingOrder secondOrder = new MatchingOrder(
-                UUID.randomUUID(),
+                2L,
                 UUID.randomUUID(),
                 "BTC/USDT",
                 OrderSide.BUY,
@@ -171,9 +160,6 @@ class OrderBookTest {
 
         PriceLevel level = book.getBestBid();
 
-        assertEquals(
-                firstOrder,
-                level.peekFirstOrder()
-        );
+        assertEquals(firstOrder, level.peekFirstOrder());
     }
 }

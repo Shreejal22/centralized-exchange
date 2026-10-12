@@ -102,4 +102,82 @@ public class BalanceService {
 
         balanceRepository.save(balance);
     }
+
+    @Transactional
+    public Balance initialise(Wallet wallet,Asset asset){
+        if(wallet==null||asset==null){
+            throw new IllegalArgumentException("Wallet and Asset are required");
+        }
+        return balanceRepository. findByWalletAndAsset(wallet, asset)
+                .orElseGet(() -> {
+            Balance balance = new Balance();
+            balance.setWallet(wallet);
+            balance.setAsset(asset);
+            balance.setAvailable(BigDecimal.ZERO);
+            balance.setReserved(BigDecimal.ZERO);
+
+            return balanceRepository.save(balance);
+        }
+                        );
+    }
+    @Transactional
+    public Balance credit(Wallet wallet, Asset asset, BigDecimal amount) {
+
+        if (amount == null || amount.signum() <= 0) {
+            throw new InvalidAmountException("Amount must be positive");
+        }
+
+        Balance balance = balanceRepository
+                .findByWalletAndAsset(wallet, asset)
+                .orElseThrow(() ->
+                        new BalanceNotFoundException(
+                                "Balance not found for wallet and asset"));
+
+        balance.setAvailable(balance.getAvailable().add(amount));
+
+        return balanceRepository.save(balance);
+    }
+
+    @Transactional(readOnly = true)
+    public Balance getBalance(Wallet wallet, Asset asset) {
+        return balanceRepository.findByWalletAndAsset(wallet, asset)
+                .orElseThrow(() -> new BalanceNotFoundException(
+                        "Balance not found for wallet and asset"
+                ));
+    }
+
+    @Transactional
+    public Balance debit(
+            Wallet wallet,
+            Asset asset,
+            BigDecimal amount
+    ) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new InvalidAmountException(
+                    "Debit amount must be positive"
+            );
+        }
+
+        Balance balance = balanceRepository
+                .findByWalletAndAsset(wallet, asset)
+                .orElseThrow(() ->
+                        new BalanceNotFoundException(
+                                "Balance not found for wallet and asset"
+                        )
+                );
+
+        if (balance.getAvailable().compareTo(amount) < 0) {
+            throw new InsufficientBalanceException(
+                    "Insufficient available balance"
+            );
+        }
+
+        balance.setAvailable(
+                balance.getAvailable().subtract(amount)
+        );
+
+        return balanceRepository.save(balance);
+    }
+
+
 }

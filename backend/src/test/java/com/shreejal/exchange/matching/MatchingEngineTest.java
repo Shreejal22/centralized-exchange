@@ -1,4 +1,5 @@
-package com.shreejal.exchange.matching;
+
+        package com.shreejal.exchange.matching;
 
 import org.junit.jupiter.api.Test;
 
@@ -6,1452 +7,728 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class MatchingEngineTest {
 
+    private static final String SYMBOL = "BTC/USDT";
+
+    private MatchingEngine newEngine() {
+        return new MatchingEngine(SYMBOL);
+    }
+
+    private MatchingOrder order(
+            Long userId,
+            UUID orderId,
+            String symbol,
+            OrderSide side,
+            OrderType type,
+            String price,
+            String quantity,
+            TimeInForce timeInForce,
+            long sequenceNumber
+    ) {
+        return new MatchingOrder(
+                userId,
+                orderId,
+                symbol,
+                side,
+                type,
+                price == null ? null : new BigDecimal(price),
+                new BigDecimal(quantity),
+                timeInForce,
+                sequenceNumber
+        );
+    }
+
+    private MatchingOrder order(
+            OrderSide side,
+            OrderType type,
+            String price,
+            String quantity,
+            TimeInForce timeInForce,
+            long sequenceNumber
+    ) {
+        return order(
+                1L,
+                UUID.randomUUID(),
+                SYMBOL,
+                side,
+                type,
+                price,
+                quantity,
+                timeInForce,
+                sequenceNumber
+        );
+    }
+
+    private MatchingOrder limitOrder(
+            OrderSide side,
+            String price,
+            String quantity,
+            long sequenceNumber
+    ) {
+        return order(
+                side,
+                OrderType.LIMIT,
+                price,
+                quantity,
+                TimeInForce.GTC,
+                sequenceNumber
+        );
+    }
+
     @Test
     void engineShouldStartWithCorrectOrderBook() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
 
-        assertEquals(
-                "BTC/USDT",
-                engine.getOrderBook().getSymbol()
-        );
+        assertEquals(SYMBOL, engine.getOrderBook().getSymbol());
     }
 
     @Test
     void limitOrderShouldBeAddedToOrderBook() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
+        MatchingOrder buy = limitOrder(
+                OrderSide.BUY, "100", "1", 1
+        );
 
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        engine.submit(buy);
 
-        engine.submit(order);
-
+        assertNotNull(engine.getOrderBook().getBestBid());
         assertEquals(
                 new BigDecimal("100"),
-                engine.getOrderBook()
-                        .getBestBid()
-                        .getPrice()
+                engine.getOrderBook().getBestBid().getPrice()
         );
-
-        assertEquals(
-                OrderStatus.NEW,
-                order.getStatus()
-        );
+        assertEquals(OrderStatus.NEW, buy.getStatus());
     }
 
     @Test
     void buyOrderShouldMatchExistingSellOrder() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
+        MatchingOrder sell = limitOrder(
+                OrderSide.SELL, "100", "1", 1
+        );
+        engine.getOrderBook().addOrder(sell);
 
-        MatchingOrder sellOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        engine.getOrderBook()
-                .addOrder(sellOrder);
-
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        MatchingResult result =
-                engine.submit(buyOrder);
-
-        assertEquals(
-                1,
-                result.getTrades().size()
+        MatchingOrder buy = limitOrder(
+                OrderSide.BUY, "100", "1", 2
         );
 
-        Trade trade =
-                result.getTrades().get(0);
+        MatchingResult result = engine.submit(buy);
 
-        assertEquals(
-                new BigDecimal("100"),
-                trade.getPrice()
-        );
+        assertEquals(1, result.getTrades().size());
 
-        assertEquals(
-                new BigDecimal("1"),
-                trade.getQuantity()
-        );
+        Trade trade = result.getTrades().get(0);
+        assertEquals(new BigDecimal("100"), trade.getPrice());
+        assertEquals(new BigDecimal("1"), trade.getQuantity());
+        assertEquals(sell.getOrderId(), trade.getSellOrderId());
+        assertEquals(buy.getOrderId(), trade.getBuyOrderId());
 
-        assertEquals(
-                BigDecimal.ZERO,
-                buyOrder.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.FILLED,
-                buyOrder.getStatus()
-        );
-
-        assertEquals(
-                BigDecimal.ZERO,
-                sellOrder.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.FILLED,
-                sellOrder.getStatus()
-        );
+        assertEquals(BigDecimal.ZERO, buy.getRemainingQuantity());
+        assertEquals(BigDecimal.ZERO, sell.getRemainingQuantity());
+        assertEquals(OrderStatus.FILLED, buy.getStatus());
+        assertEquals(OrderStatus.FILLED, sell.getStatus());
     }
 
     @Test
     void buyOrderShouldPartiallyFillExistingSellOrder() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
+        MatchingOrder sell = limitOrder(
+                OrderSide.SELL, "100", "4", 1
+        );
+        engine.getOrderBook().addOrder(sell);
 
-        MatchingOrder sellOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("4"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        engine.getOrderBook()
-                .addOrder(sellOrder);
-
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("10"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        MatchingResult result =
-                engine.submit(buyOrder);
-
-        assertEquals(
-                1,
-                result.getTrades().size()
+        MatchingOrder buy = limitOrder(
+                OrderSide.BUY, "100", "10", 2
         );
 
+        MatchingResult result = engine.submit(buy);
+
+        assertEquals(1, result.getTrades().size());
         assertEquals(
                 new BigDecimal("4"),
-                result.getTrades()
-                        .get(0)
-                        .getQuantity()
+                result.getTrades().get(0).getQuantity()
         );
-
         assertEquals(
                 new BigDecimal("6"),
-                buyOrder.getRemainingQuantity()
+                buy.getRemainingQuantity()
         );
-
-        assertEquals(
-                OrderStatus.PARTIALLY_FILLED,
-                buyOrder.getStatus()
-        );
-
-        assertEquals(
-                BigDecimal.ZERO,
-                sellOrder.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.FILLED,
-                sellOrder.getStatus()
-        );
-
-        assertEquals(
-                null,
-                engine.getOrderBook().getBestAsk()
-        );
+        assertEquals(BigDecimal.ZERO, sell.getRemainingQuantity());
+        assertEquals(OrderStatus.PARTIALLY_FILLED, buy.getStatus());
+        assertEquals(OrderStatus.FILLED, sell.getStatus());
     }
 
     @Test
     void buyOrderShouldMatchAcrossMultiplePriceLevels() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
 
-        MatchingOrder sell100 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("2"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        MatchingOrder sell101 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("101"),
-                        new BigDecimal("3"),
-                        TimeInForce.GTC,
-                        2
-                );
+        MatchingOrder sell100 = limitOrder(
+                OrderSide.SELL, "100", "2", 1
+        );
+        MatchingOrder sell101 = limitOrder(
+                OrderSide.SELL, "101", "3", 2
+        );
 
         engine.getOrderBook().addOrder(sell100);
         engine.getOrderBook().addOrder(sell101);
 
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("105"),
-                        new BigDecimal("5"),
-                        TimeInForce.GTC,
-                        3
-                );
-
-        MatchingResult result =
-                engine.submit(buyOrder);
-
-        assertEquals(
-                2,
-                result.getTrades().size()
+        MatchingOrder buy = limitOrder(
+                OrderSide.BUY, "101", "5", 3
         );
 
+        MatchingResult result = engine.submit(buy);
+
+        assertEquals(2, result.getTrades().size());
         assertEquals(
                 new BigDecimal("100"),
                 result.getTrades().get(0).getPrice()
         );
-
         assertEquals(
                 new BigDecimal("2"),
                 result.getTrades().get(0).getQuantity()
         );
-
         assertEquals(
                 new BigDecimal("101"),
                 result.getTrades().get(1).getPrice()
         );
-
         assertEquals(
                 new BigDecimal("3"),
                 result.getTrades().get(1).getQuantity()
         );
-
-        assertEquals(
-                BigDecimal.ZERO,
-                buyOrder.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.FILLED,
-                buyOrder.getStatus()
-        );
-
-        assertEquals(
-                null,
-                engine.getOrderBook().getBestAsk()
-        );
+        assertEquals(BigDecimal.ZERO, buy.getRemainingQuantity());
+        assertEquals(OrderStatus.FILLED, buy.getStatus());
     }
 
     @Test
     void bestPriceShouldBeMatchedFirst() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
 
-        MatchingOrder sell105 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("105"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        MatchingOrder sell100 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        MatchingOrder sell103 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("103"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        3
-                );
+        MatchingOrder sell105 = limitOrder(
+                OrderSide.SELL, "105", "1", 1
+        );
+        MatchingOrder sell100 = limitOrder(
+                OrderSide.SELL, "100", "1", 2
+        );
+        MatchingOrder sell103 = limitOrder(
+                OrderSide.SELL, "103", "1", 3
+        );
 
         engine.getOrderBook().addOrder(sell105);
         engine.getOrderBook().addOrder(sell100);
         engine.getOrderBook().addOrder(sell103);
 
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("110"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        4
-                );
+        MatchingOrder buy = limitOrder(
+                OrderSide.BUY, "105", "3", 4
+        );
 
-        MatchingResult result =
-                engine.submit(buyOrder);
+        MatchingResult result = engine.submit(buy);
 
+        assertEquals(3, result.getTrades().size());
         assertEquals(
                 new BigDecimal("100"),
-                result.getTrades()
-                        .get(0)
-                        .getPrice()
+                result.getTrades().get(0).getPrice()
+        );
+        assertEquals(
+                new BigDecimal("103"),
+                result.getTrades().get(1).getPrice()
+        );
+        assertEquals(
+                new BigDecimal("105"),
+                result.getTrades().get(2).getPrice()
         );
     }
 
     @Test
     void olderOrderAtSamePriceShouldMatchFirst() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
 
-        MatchingOrder firstSell =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        MatchingOrder secondSell =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        2
-                );
+        MatchingOrder firstSell = limitOrder(
+                OrderSide.SELL, "100", "1", 1
+        );
+        MatchingOrder secondSell = limitOrder(
+                OrderSide.SELL, "100", "1", 2
+        );
 
         engine.getOrderBook().addOrder(firstSell);
         engine.getOrderBook().addOrder(secondSell);
 
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        3
-                );
+        MatchingOrder buy = limitOrder(
+                OrderSide.BUY, "100", "1", 3
+        );
 
-        MatchingResult result =
-                engine.submit(buyOrder);
+        MatchingResult result = engine.submit(buy);
 
         assertEquals(
                 firstSell.getOrderId(),
-                result.getTrades()
-                        .get(0)
-                        .getSellOrderId()
+                result.getTrades().get(0).getSellOrderId()
         );
     }
 
     @Test
     void limitBuyBelowBestAskShouldNotMatch() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
+        MatchingOrder sell = limitOrder(
+                OrderSide.SELL, "100", "1", 1
+        );
+        engine.getOrderBook().addOrder(sell);
 
-        MatchingOrder sellOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("105"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        engine.getOrderBook()
-                .addOrder(sellOrder);
-
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        MatchingResult result =
-                engine.submit(buyOrder);
-
-        assertEquals(
-                0,
-                result.getTrades().size()
+        MatchingOrder buy = limitOrder(
+                OrderSide.BUY, "99", "1", 2
         );
 
-        assertEquals(
-                new BigDecimal("1"),
-                buyOrder.getRemainingQuantity()
-        );
+        MatchingResult result = engine.submit(buy);
 
+        assertEquals(0, result.getTrades().size());
         assertEquals(
-                OrderStatus.NEW,
-                buyOrder.getStatus()
+                new BigDecimal("99"),
+                engine.getOrderBook().getBestBid().getPrice()
         );
-
         assertEquals(
                 new BigDecimal("100"),
-                engine.getOrderBook()
-                        .getBestBid()
-                        .getPrice()
+                engine.getOrderBook().getBestAsk().getPrice()
         );
     }
 
     @Test
     void sellOrderShouldMatchExistingBuyOrder() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
 
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("2"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingOrder buy = limitOrder(
+                OrderSide.BUY, "100", "2", 1
+        );
+        engine.getOrderBook().addOrder(buy);
 
-        engine.getOrderBook()
-                .addOrder(buyOrder);
-
-        MatchingOrder sellOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("2"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        MatchingResult result =
-                engine.submit(sellOrder);
-
-        assertEquals(
-                1,
-                result.getTrades().size()
+        MatchingOrder sell = limitOrder(
+                OrderSide.SELL, "100", "2", 2
         );
 
-        Trade trade =
-                result.getTrades().get(0);
+        MatchingResult result = engine.submit(sell);
 
-        assertEquals(
-                buyOrder.getOrderId(),
-                trade.getBuyOrderId()
-        );
+        assertEquals(1, result.getTrades().size());
+        Trade trade = result.getTrades().get(0);
 
-        assertEquals(
-                sellOrder.getOrderId(),
-                trade.getSellOrderId()
-        );
-
-        assertEquals(
-                new BigDecimal("100"),
-                trade.getPrice()
-        );
-
-        assertEquals(
-                new BigDecimal("2"),
-                trade.getQuantity()
-        );
-
-        assertEquals(
-                BigDecimal.ZERO,
-                sellOrder.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.FILLED,
-                sellOrder.getStatus()
-        );
-
-        assertEquals(
-                BigDecimal.ZERO,
-                buyOrder.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.FILLED,
-                buyOrder.getStatus()
-        );
+        assertEquals(buy.getOrderId(), trade.getBuyOrderId());
+        assertEquals(sell.getOrderId(), trade.getSellOrderId());
+        assertEquals(new BigDecimal("100"), trade.getPrice());
+        assertEquals(new BigDecimal("2"), trade.getQuantity());
+        assertEquals(BigDecimal.ZERO, buy.getRemainingQuantity());
+        assertEquals(BigDecimal.ZERO, sell.getRemainingQuantity());
+        assertEquals(OrderStatus.FILLED, buy.getStatus());
+        assertEquals(OrderStatus.FILLED, sell.getStatus());
     }
 
     @Test
     void marketBuyShouldMatchAvailableLiquidity() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
 
-        MatchingOrder sell100 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("2"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        MatchingOrder sell101 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("101"),
-                        new BigDecimal("3"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        engine.getOrderBook().addOrder(sell100);
-        engine.getOrderBook().addOrder(sell101);
-
-        MatchingOrder marketBuy =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.MARKET,
-                        null,
-                        new BigDecimal("5"),
-                        TimeInForce.GTC,
-                        3
-                );
-
-        MatchingResult result =
-                engine.submit(marketBuy);
-
-        assertEquals(
-                2,
-                result.getTrades().size()
+        engine.getOrderBook().addOrder(
+                limitOrder(OrderSide.SELL, "100", "2", 1)
+        );
+        engine.getOrderBook().addOrder(
+                limitOrder(OrderSide.SELL, "101", "3", 2)
         );
 
+        MatchingOrder marketBuy = order(
+                OrderSide.BUY,
+                OrderType.MARKET,
+                null,
+                "5",
+                TimeInForce.GTC,
+                3
+        );
+
+        MatchingResult result = engine.submit(marketBuy);
+
+        assertEquals(2, result.getTrades().size());
         assertEquals(
                 new BigDecimal("100"),
-                result.getTrades()
-                        .get(0)
-                        .getPrice()
+                result.getTrades().get(0).getPrice()
         );
-
         assertEquals(
                 new BigDecimal("2"),
-                result.getTrades()
-                        .get(0)
-                        .getQuantity()
+                result.getTrades().get(0).getQuantity()
         );
-
         assertEquals(
                 new BigDecimal("101"),
-                result.getTrades()
-                        .get(1)
-                        .getPrice()
+                result.getTrades().get(1).getPrice()
         );
-
         assertEquals(
                 new BigDecimal("3"),
-                result.getTrades()
-                        .get(1)
-                        .getQuantity()
+                result.getTrades().get(1).getQuantity()
         );
-
-        assertEquals(
-                BigDecimal.ZERO,
-                marketBuy.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.FILLED,
-                marketBuy.getStatus()
-        );
+        assertEquals(BigDecimal.ZERO, marketBuy.getRemainingQuantity());
+        assertEquals(OrderStatus.FILLED, marketBuy.getStatus());
     }
 
     @Test
     void marketBuyShouldStopWhenLiquidityRunsOut() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder sellOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("5"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        engine.getOrderBook()
-                .addOrder(sellOrder);
-
-        MatchingOrder marketBuy =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.MARKET,
-                        null,
-                        new BigDecimal("10"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        MatchingResult result =
-                engine.submit(marketBuy);
-
-        assertEquals(
-                1,
-                result.getTrades().size()
+        MatchingEngine engine = newEngine();
+        engine.getOrderBook().addOrder(
+                limitOrder(OrderSide.SELL, "100", "2", 1)
         );
 
-        assertEquals(
-                new BigDecimal("5"),
-                result.getTrades()
-                        .get(0)
-                        .getQuantity()
+        MatchingOrder marketBuy = order(
+                OrderSide.BUY,
+                OrderType.MARKET,
+                null,
+                "5",
+                TimeInForce.GTC,
+                2
         );
 
+        MatchingResult result = engine.submit(marketBuy);
+
+        assertEquals(1, result.getTrades().size());
         assertEquals(
-                new BigDecimal("5"),
+                new BigDecimal("2"),
+                result.getTrades().get(0).getQuantity()
+        );
+        assertEquals(
+                new BigDecimal("3"),
                 marketBuy.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.PARTIALLY_FILLED,
-                marketBuy.getStatus()
-        );
-
-        assertEquals(
-                null,
-                engine.getOrderBook().getBestAsk()
-        );
-
-        assertEquals(
-                null,
-                engine.getOrderBook().getBestBid()
         );
     }
 
     @Test
     void marketSellShouldMatchAvailableLiquidity() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
 
-        MatchingOrder buy100 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("2"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        MatchingOrder buy99 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("99"),
-                        new BigDecimal("3"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        engine.getOrderBook().addOrder(buy100);
-        engine.getOrderBook().addOrder(buy99);
-
-        MatchingOrder marketSell =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.MARKET,
-                        null,
-                        new BigDecimal("5"),
-                        TimeInForce.GTC,
-                        3
-                );
-
-        MatchingResult result =
-                engine.submit(marketSell);
-
-        assertEquals(
-                2,
-                result.getTrades().size()
+        engine.getOrderBook().addOrder(
+                limitOrder(OrderSide.BUY, "101", "2", 1)
+        );
+        engine.getOrderBook().addOrder(
+                limitOrder(OrderSide.BUY, "100", "3", 2)
         );
 
-        assertEquals(
-                new BigDecimal("100"),
-                result.getTrades()
-                        .get(0)
-                        .getPrice()
+        MatchingOrder marketSell = order(
+                OrderSide.SELL,
+                OrderType.MARKET,
+                null,
+                "5",
+                TimeInForce.GTC,
+                3
         );
 
+        MatchingResult result = engine.submit(marketSell);
+
+        assertEquals(2, result.getTrades().size());
+        assertEquals(
+                new BigDecimal("101"),
+                result.getTrades().get(0).getPrice()
+        );
         assertEquals(
                 new BigDecimal("2"),
-                result.getTrades()
-                        .get(0)
-                        .getQuantity()
+                result.getTrades().get(0).getQuantity()
         );
-
         assertEquals(
-                new BigDecimal("99"),
-                result.getTrades()
-                        .get(1)
-                        .getPrice()
+                new BigDecimal("100"),
+                result.getTrades().get(1).getPrice()
         );
-
         assertEquals(
                 new BigDecimal("3"),
-                result.getTrades()
-                        .get(1)
-                        .getQuantity()
+                result.getTrades().get(1).getQuantity()
         );
-
-        assertEquals(
-                BigDecimal.ZERO,
-                marketSell.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.FILLED,
-                marketSell.getStatus()
-        );
+        assertEquals(BigDecimal.ZERO, marketSell.getRemainingQuantity());
+        assertEquals(OrderStatus.FILLED, marketSell.getStatus());
     }
 
     @Test
     void marketSellShouldStopWhenLiquidityRunsOut() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("5"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        engine.getOrderBook()
-                .addOrder(buyOrder);
-
-        MatchingOrder marketSell =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.MARKET,
-                        null,
-                        new BigDecimal("10"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        MatchingResult result =
-                engine.submit(marketSell);
-
-        assertEquals(
-                1,
-                result.getTrades().size()
+        MatchingEngine engine = newEngine();
+        engine.getOrderBook().addOrder(
+                limitOrder(OrderSide.BUY, "100", "2", 1)
         );
 
-        assertEquals(
-                new BigDecimal("5"),
-                marketSell.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.PARTIALLY_FILLED,
-                marketSell.getStatus()
-        );
-
-        assertEquals(
+        MatchingOrder marketSell = order(
+                OrderSide.SELL,
+                OrderType.MARKET,
                 null,
-                engine.getOrderBook().getBestBid()
+                "5",
+                TimeInForce.GTC,
+                2
+        );
+
+        MatchingResult result = engine.submit(marketSell);
+
+        assertEquals(1, result.getTrades().size());
+        assertEquals(
+                new BigDecimal("2"),
+                result.getTrades().get(0).getQuantity()
+        );
+        assertEquals(
+                new BigDecimal("3"),
+                marketSell.getRemainingQuantity()
         );
     }
 
     @Test
     void iocOrderShouldCancelUnfilledRemainder() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder sellOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("4"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        engine.getOrderBook()
-                .addOrder(sellOrder);
-
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("10"),
-                        TimeInForce.IOC,
-                        2
-                );
-
-        MatchingResult result =
-                engine.submit(buyOrder);
-
-        assertEquals(
-                1,
-                result.getTrades().size()
+        MatchingEngine engine = newEngine();
+        engine.getOrderBook().addOrder(
+                limitOrder(OrderSide.SELL, "100", "2", 1)
         );
 
-        assertEquals(
-                new BigDecimal("4"),
-                result.getTrades()
-                        .get(0)
-                        .getQuantity()
+        MatchingOrder buy = order(
+                OrderSide.BUY,
+                OrderType.LIMIT,
+                "100",
+                "5",
+                TimeInForce.IOC,
+                2
         );
 
-        assertEquals(
-                BigDecimal.ZERO,
-                buyOrder.getRemainingQuantity()
-        );
+        MatchingResult result = engine.submit(buy);
 
-        assertEquals(
-                OrderStatus.CANCELLED,
-                buyOrder.getStatus()
-        );
-
-        assertEquals(
-                null,
-                engine.getOrderBook().getBestBid()
-        );
+        assertEquals(1, result.getTrades().size());
+        assertEquals(BigDecimal.ZERO, buy.getRemainingQuantity());
+        assertEquals(OrderStatus.CANCELLED, buy.getStatus());
+        assertNull(engine.getOrderBook().getBestBid());
     }
 
     @Test
     void iocOrderWithNoLiquidityShouldBeCanceled() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
 
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("10"),
-                        TimeInForce.IOC,
-                        1
-                );
-
-        MatchingResult result =
-                engine.submit(buyOrder);
-
-        assertEquals(
-                0,
-                result.getTrades().size()
+        MatchingOrder buy = order(
+                OrderSide.BUY,
+                OrderType.LIMIT,
+                "100",
+                "10",
+                TimeInForce.IOC,
+                1
         );
 
-        assertEquals(
-                BigDecimal.ZERO,
-                buyOrder.getRemainingQuantity()
-        );
+        MatchingResult result = engine.submit(buy);
 
-        assertEquals(
-                OrderStatus.CANCELLED,
-                buyOrder.getStatus()
-        );
-
-        assertEquals(
-                null,
-                engine.getOrderBook().getBestBid()
-        );
+        assertEquals(0, result.getTrades().size());
+        assertEquals(BigDecimal.ZERO, buy.getRemainingQuantity());
+        assertEquals(OrderStatus.CANCELLED, buy.getStatus());
+        assertNull(engine.getOrderBook().getBestBid());
     }
 
     @Test
     void fokOrderShouldExecuteWhenEnoughLiquidityExists() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder sell100 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("2"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        MatchingOrder sell101 =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("101"),
-                        new BigDecimal("3"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        engine.getOrderBook().addOrder(sell100);
-        engine.getOrderBook().addOrder(sell101);
-
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("105"),
-                        new BigDecimal("5"),
-                        TimeInForce.FOK,
-                        3
-                );
-
-        MatchingResult result =
-                engine.submit(buyOrder);
-
-        assertEquals(
-                2,
-                result.getTrades().size()
+        MatchingEngine engine = newEngine();
+        engine.getOrderBook().addOrder(
+                limitOrder(OrderSide.SELL, "100", "5", 1)
+        );
+        engine.getOrderBook().addOrder(
+                limitOrder(OrderSide.SELL, "101", "5", 2)
         );
 
-        assertEquals(
-                BigDecimal.ZERO,
-                buyOrder.getRemainingQuantity()
+        MatchingOrder buy = order(
+                OrderSide.BUY,
+                OrderType.LIMIT,
+                "101",
+                "10",
+                TimeInForce.FOK,
+                3
         );
 
-        assertEquals(
-                OrderStatus.FILLED,
-                buyOrder.getStatus()
-        );
+        MatchingResult result = engine.submit(buy);
+
+        assertEquals(2, result.getTrades().size());
+        assertEquals(BigDecimal.ZERO, buy.getRemainingQuantity());
+        assertEquals(OrderStatus.FILLED, buy.getStatus());
     }
 
     @Test
     void fokOrderShouldNotExecuteWhenInsufficientLiquidityExists() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
+        MatchingOrder sell = limitOrder(
+                OrderSide.SELL, "100", "5", 1
+        );
+        engine.getOrderBook().addOrder(sell);
 
-        MatchingOrder sellOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("5"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        engine.getOrderBook()
-                .addOrder(sellOrder);
-
-        MatchingOrder buyOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("105"),
-                        new BigDecimal("10"),
-                        TimeInForce.FOK,
-                        2
-                );
-
-        MatchingResult result =
-                engine.submit(buyOrder);
-
-        assertEquals(
-                0,
-                result.getTrades().size()
+        MatchingOrder buy = order(
+                OrderSide.BUY,
+                OrderType.LIMIT,
+                "105",
+                "10",
+                TimeInForce.FOK,
+                2
         );
 
-        assertEquals(
-                new BigDecimal("10"),
-                buyOrder.getRemainingQuantity()
-        );
+        MatchingResult result = engine.submit(buy);
 
-        assertEquals(
-                OrderStatus.REJECTED,
-                buyOrder.getStatus()
-        );
-
+        assertEquals(0, result.getTrades().size());
+        assertEquals(new BigDecimal("10"), buy.getRemainingQuantity());
+        assertEquals(OrderStatus.REJECTED, buy.getStatus());
         assertEquals(
                 new BigDecimal("100"),
-                engine.getOrderBook()
-                        .getBestAsk()
-                        .getPrice()
+                engine.getOrderBook().getBestAsk().getPrice()
         );
-
         assertEquals(
                 new BigDecimal("5"),
-                engine.getOrderBook()
-                        .getBestAsk()
-                        .getTotalRemainingQuantity()
+                engine.getOrderBook().getBestAsk().getTotalRemainingQuantity()
         );
-
-        assertEquals(
-                OrderStatus.NEW,
-                sellOrder.getStatus()
-        );
+        assertEquals(OrderStatus.NEW, sell.getStatus());
     }
 
     @Test
     void postOnlyOrderShouldBeRejectedIfItWouldCross() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
+        MatchingOrder sell = limitOrder(
+                OrderSide.SELL, "100", "1", 1
+        );
+        engine.getOrderBook().addOrder(sell);
 
-        MatchingOrder sellOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        engine.getOrderBook()
-                .addOrder(sellOrder);
-
-        MatchingOrder postOnlyBuy =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("101"),
-                        new BigDecimal("1"),
-                        TimeInForce.POST_ONLY,
-                        2
-                );
+        MatchingOrder postOnlyBuy = order(
+                OrderSide.BUY,
+                OrderType.LIMIT,
+                "101",
+                "1",
+                TimeInForce.POST_ONLY,
+                2
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
                 () -> engine.submit(postOnlyBuy)
         );
 
-        assertEquals(
-                OrderStatus.REJECTED,
-                postOnlyBuy.getStatus()
-        );
-
+        assertEquals(OrderStatus.REJECTED, postOnlyBuy.getStatus());
         assertEquals(
                 new BigDecimal("100"),
-                engine.getOrderBook()
-                        .getBestAsk()
-                        .getPrice()
+                engine.getOrderBook().getBestAsk().getPrice()
         );
     }
 
     @Test
     void postOnlyOrderShouldRestWhenItDoesNotCross() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
+        engine.getOrderBook().addOrder(
+                limitOrder(OrderSide.SELL, "100", "1", 1)
+        );
 
-        MatchingOrder sellOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingOrder postOnlyBuy = order(
+                OrderSide.BUY,
+                OrderType.LIMIT,
+                "99",
+                "1",
+                TimeInForce.POST_ONLY,
+                2
+        );
 
-        engine.getOrderBook()
-                .addOrder(sellOrder);
+        MatchingResult result = engine.submit(postOnlyBuy);
 
-        MatchingOrder postOnlyBuy =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("99"),
-                        new BigDecimal("1"),
-                        TimeInForce.POST_ONLY,
-                        2
-                );
-
-        engine.submit(postOnlyBuy);
-
+        assertEquals(0, result.getTrades().size());
+        assertEquals(OrderStatus.NEW, postOnlyBuy.getStatus());
         assertEquals(
                 new BigDecimal("99"),
-                engine.getOrderBook()
-                        .getBestBid()
-                        .getPrice()
-        );
-
-        assertEquals(
-                OrderStatus.NEW,
-                postOnlyBuy.getStatus()
-        );
-
-        assertEquals(
-                new BigDecimal("100"),
-                engine.getOrderBook()
-                        .getBestAsk()
-                        .getPrice()
+                engine.getOrderBook().getBestBid().getPrice()
         );
     }
 
     @Test
     void cancelShouldRemoveOrderFromOrderBook() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("5"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        engine.submit(order);
-
-        assertEquals(
-                new BigDecimal("100"),
-                engine.getOrderBook()
-                        .getBestBid()
-                        .getPrice()
+        MatchingEngine engine = newEngine();
+        MatchingOrder buy = limitOrder(
+                OrderSide.BUY, "100", "1", 1
         );
 
-        engine.cancel(order.getOrderId());
+        engine.submit(buy);
+        engine.cancel(buy.getOrderId());
 
-        assertEquals(
-                null,
-                engine.getOrderBook().getBestBid()
-        );
-
-        assertEquals(
-                BigDecimal.ZERO,
-                order.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.CANCELLED,
-                order.getStatus()
-        );
+        assertNull(engine.getOrderBook().getBestBid());
+        assertEquals(BigDecimal.ZERO, buy.getRemainingQuantity());
+        assertEquals(OrderStatus.CANCELLED, buy.getStatus());
     }
 
     @Test
     void cancelShouldRemoveOnlyRequestedOrder() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder first =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        MatchingOrder second =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        MatchingOrder third =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        3
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder first = limitOrder(
+                OrderSide.BUY, "100", "1", 1
+        );
+        MatchingOrder second = limitOrder(
+                OrderSide.BUY, "99", "1", 2
+        );
 
         engine.submit(first);
         engine.submit(second);
-        engine.submit(third);
+        engine.cancel(first.getOrderId());
 
-        engine.cancel(second.getOrderId());
-
-        PriceLevel level =
-                engine.getOrderBook().getBestBid();
-
+        assertEquals(OrderStatus.CANCELLED, first.getStatus());
+        assertEquals(OrderStatus.NEW, second.getStatus());
         assertEquals(
-                first,
-                level.peekFirstOrder()
-        );
-
-        assertEquals(
-                new BigDecimal("1"),
-                first.getRemainingQuantity()
-        );
-
-        assertEquals(
-                new BigDecimal("1"),
-                third.getRemainingQuantity()
-        );
-
-        assertEquals(
-                OrderStatus.CANCELLED,
-                second.getStatus()
-        );
-
-        assertEquals(
-                OrderStatus.NEW,
-                first.getStatus()
-        );
-
-        assertEquals(
-                OrderStatus.NEW,
-                third.getStatus()
+                new BigDecimal("99"),
+                engine.getOrderBook().getBestBid().getPrice()
         );
     }
 
     @Test
     void cancelUnknownOrderShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        UUID unknownOrderId =
-                UUID.randomUUID();
+        MatchingEngine engine = newEngine();
 
         assertThrows(
                 IllegalArgumentException.class,
-                () -> engine.cancel(unknownOrderId)
+                () -> engine.cancel(UUID.randomUUID())
         );
     }
 
     @Test
     void partiallyFilledOrderCanBeCanceled() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
 
-        MatchingOrder sell =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.SELL,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("4"),
-                        TimeInForce.GTC,
-                        1
-                );
-
-        engine.getOrderBook()
-                .addOrder(sell);
-
-        MatchingOrder buy =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("10"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        engine.submit(buy);
-
-        assertEquals(
-                new BigDecimal("6"),
-                buy.getRemainingQuantity()
+        MatchingOrder sellOrder = order(
+                1L,
+                UUID.randomUUID(),
+                SYMBOL,
+                OrderSide.SELL,
+                OrderType.LIMIT,
+                "100",
+                "5",
+                TimeInForce.GTC,
+                1
         );
 
+        engine.submit(sellOrder);
+
+        MatchingOrder buyOrder = order(
+                2L,
+                UUID.randomUUID(),
+                SYMBOL,
+                OrderSide.BUY,
+                OrderType.LIMIT,
+                "100",
+                "2",
+                TimeInForce.GTC,
+                2
+        );
+
+        engine.submit(buyOrder);
+
+        // The sell order was partially filled: 5 - 2 = 3 remaining.
+        assertEquals(
+                new BigDecimal("3"),
+                sellOrder.getRemainingQuantity()
+        );
         assertEquals(
                 OrderStatus.PARTIALLY_FILLED,
-                buy.getStatus()
+                sellOrder.getStatus()
         );
 
-        engine.cancel(buy.getOrderId());
+        // Cancel the remaining quantity.
+        engine.cancel(sellOrder.getOrderId());
 
+        // Cancellation clears the unfilled quantity.
         assertEquals(
                 BigDecimal.ZERO,
-                buy.getRemainingQuantity()
+                sellOrder.getRemainingQuantity()
         );
-
         assertEquals(
                 OrderStatus.CANCELLED,
-                buy.getStatus()
+                sellOrder.getStatus()
         );
-
-        assertEquals(
-                null,
-                engine.getOrderBook().getBestBid()
-        );
+        assertNull(engine.getOrderBook().getBestAsk());
     }
 
     @Test
     void nullOrderShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1461,21 +738,12 @@ class MatchingEngineTest {
 
     @Test
     void nullOrderIdShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        null,
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                1L, null, SYMBOL,
+                OrderSide.BUY, OrderType.LIMIT,
+                "100", "1", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1485,21 +753,12 @@ class MatchingEngineTest {
 
     @Test
     void nullUserIdShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        null,
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                null, UUID.randomUUID(), SYMBOL,
+                OrderSide.BUY, OrderType.LIMIT,
+                "100", "1", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1509,21 +768,12 @@ class MatchingEngineTest {
 
     @Test
     void wrongSymbolShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "ETH/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                1L, UUID.randomUUID(), "ETH/USDT",
+                OrderSide.BUY, OrderType.LIMIT,
+                "100", "1", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1533,21 +783,12 @@ class MatchingEngineTest {
 
     @Test
     void nullSideShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        null,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                1L, UUID.randomUUID(), SYMBOL,
+                null, OrderType.LIMIT,
+                "100", "1", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1557,21 +798,12 @@ class MatchingEngineTest {
 
     @Test
     void nullOrderTypeShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        null,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                1L, UUID.randomUUID(), SYMBOL,
+                OrderSide.BUY, null,
+                "100", "1", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1581,21 +813,12 @@ class MatchingEngineTest {
 
     @Test
     void nullTimeInForceShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        null,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                1L, UUID.randomUUID(), SYMBOL,
+                OrderSide.BUY, OrderType.LIMIT,
+                "100", "1", null, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1605,21 +828,11 @@ class MatchingEngineTest {
 
     @Test
     void zeroQuantityShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        BigDecimal.ZERO,
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                OrderSide.BUY, OrderType.LIMIT,
+                "100", "0", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1629,21 +842,11 @@ class MatchingEngineTest {
 
     @Test
     void negativeQuantityShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("-1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                OrderSide.BUY, OrderType.LIMIT,
+                "100", "-1", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1653,21 +856,11 @@ class MatchingEngineTest {
 
     @Test
     void limitOrderWithoutPriceShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        null,
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                OrderSide.BUY, OrderType.LIMIT,
+                null, "1", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1677,21 +870,11 @@ class MatchingEngineTest {
 
     @Test
     void limitOrderWithZeroPriceShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        BigDecimal.ZERO,
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                OrderSide.BUY, OrderType.LIMIT,
+                "0", "1", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1701,21 +884,11 @@ class MatchingEngineTest {
 
     @Test
     void limitOrderWithNegativePriceShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("-100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                OrderSide.BUY, OrderType.LIMIT,
+                "-1", "1", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1725,21 +898,11 @@ class MatchingEngineTest {
 
     @Test
     void marketOrderWithPriceShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.MARKET,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                OrderSide.BUY, OrderType.MARKET,
+                "100", "1", TimeInForce.GTC, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1749,21 +912,11 @@ class MatchingEngineTest {
 
     @Test
     void postOnlyMarketOrderShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
-
-        MatchingOrder order =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.MARKET,
-                        null,
-                        new BigDecimal("1"),
-                        TimeInForce.POST_ONLY,
-                        1
-                );
+        MatchingEngine engine = newEngine();
+        MatchingOrder order = order(
+                OrderSide.BUY, OrderType.MARKET,
+                null, "1", TimeInForce.POST_ONLY, 1
+        );
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -1773,43 +926,108 @@ class MatchingEngineTest {
 
     @Test
     void duplicateOrderIdShouldFail() {
-        MatchingEngine engine =
-                new MatchingEngine("BTC/USDT");
+        MatchingEngine engine = newEngine();
+        UUID sharedOrderId = UUID.randomUUID();
 
-        UUID orderId =
-                UUID.randomUUID();
+        MatchingOrder first = order(
+                1L, sharedOrderId, SYMBOL,
+                OrderSide.BUY, OrderType.LIMIT,
+                "100", "1", TimeInForce.GTC, 1
+        );
 
-        MatchingOrder firstOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        orderId,
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("100"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        1
-                );
+        MatchingOrder duplicate = order(
+                2L, sharedOrderId, SYMBOL,
+                OrderSide.BUY, OrderType.LIMIT,
+                "99", "1", TimeInForce.GTC, 2
+        );
 
-        MatchingOrder duplicateOrder =
-                new MatchingOrder(
-                        UUID.randomUUID(),
-                        orderId,
-                        "BTC/USDT",
-                        OrderSide.BUY,
-                        OrderType.LIMIT,
-                        new BigDecimal("99"),
-                        new BigDecimal("1"),
-                        TimeInForce.GTC,
-                        2
-                );
-
-        engine.submit(firstOrder);
+        engine.submit(first);
 
         assertThrows(
                 IllegalArgumentException.class,
-                () -> engine.submit(duplicateOrder)
+                () -> engine.submit(duplicate)
+        );
+    }
+
+    @Test
+    void reduceRemainingQuantityShouldSubtractValidQuantity() {
+        MatchingOrder order = limitOrder(
+                OrderSide.BUY, "100", "5", 1
+        );
+
+        order.reduceRemainingQuantity(new BigDecimal("2"));
+
+        assertEquals(
+                new BigDecimal("3"),
+                order.getRemainingQuantity()
+        );
+    }
+
+    @Test
+    void reduceRemainingQuantityShouldAllowExactRemainingQuantity() {
+        MatchingOrder order = limitOrder(
+                OrderSide.BUY, "100", "5", 1
+        );
+
+        order.reduceRemainingQuantity(new BigDecimal("5"));
+
+        assertEquals(BigDecimal.ZERO, order.getRemainingQuantity());
+    }
+
+    @Test
+    void reduceRemainingQuantityShouldRejectNull() {
+        MatchingOrder order = limitOrder(
+                OrderSide.BUY, "100", "5", 1
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> order.reduceRemainingQuantity(null)
+        );
+    }
+
+    @Test
+    void reduceRemainingQuantityShouldRejectZero() {
+        MatchingOrder order = limitOrder(
+                OrderSide.BUY, "100", "5", 1
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> order.reduceRemainingQuantity(BigDecimal.ZERO)
+        );
+    }
+
+    @Test
+    void reduceRemainingQuantityShouldRejectNegativeQuantity() {
+        MatchingOrder order = limitOrder(
+                OrderSide.BUY, "100", "5", 1
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> order.reduceRemainingQuantity(
+                        new BigDecimal("-1")
+                )
+        );
+    }
+
+    @Test
+    void reduceRemainingQuantityShouldRejectQuantityAboveRemaining() {
+        MatchingOrder order = limitOrder(
+                OrderSide.BUY, "100", "5", 1
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> order.reduceRemainingQuantity(
+                        new BigDecimal("6")
+                )
+        );
+
+        assertEquals(
+                new BigDecimal("5"),
+                order.getRemainingQuantity()
         );
     }
 }
