@@ -172,7 +172,7 @@ public class BalanceService {
         return balanceRepository.save(balance);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Balance getBalance(Wallet wallet, Asset asset) {
         return balanceRepository.findByWalletAndAsset(wallet, asset)
                 .orElseThrow(() -> new BalanceNotFoundException(

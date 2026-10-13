@@ -3,9 +3,11 @@ package com.shreejal.exchange.service;
 import com.shreejal.exchange.dto.PlaceOrderRequest;
 import com.shreejal.exchange.matching.MatchingEngine;
 import com.shreejal.exchange.matching.MatchingEngineRegistry;
+import org.springframework.stereotype.Service;
 
 import java.util.concurrent.locks.ReentrantLock;
 
+@Service
 public class OrderService {
     private final MatchingEngineRegistry matchingEngineRegistry;
     private final OrderTransactionService orderTransactionService;
