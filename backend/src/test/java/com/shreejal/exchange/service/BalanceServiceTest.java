@@ -1,29 +1,31 @@
-package com.shreejal.exchange.service;
 
-import com.shreejal.exchange.exception.BalanceNotFoundException;
+package com.shreejal.exchange.service;
 import com.shreejal.exchange.exception.InsufficientBalanceException;
 import com.shreejal.exchange.exception.InvalidAmountException;
 import com.shreejal.exchange.model.Asset;
 import com.shreejal.exchange.model.Balance;
 import com.shreejal.exchange.model.Wallet;
 import com.shreejal.exchange.repository.BalanceRepository;
-
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.math.BigDecimal;
-import java.util.Optional;
+import static org.mockito.ArgumentMatchers.any;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import java.math.BigDecimal;
+import java.util.Optional;
+import com.shreejal.exchange.exception.BalanceNotFoundException;
+
+
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+
+import static org.mockito.ArgumentMatchers.eq;
 
 @ExtendWith(MockitoExtension.class)
 class BalanceServiceTest {
