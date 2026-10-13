@@ -488,4 +488,98 @@ public class MatchingEngine {
             order.setStatus(OrderStatus.PARTIALLY_FILLED);
         }
     }
+
+    public void restoreRestingOrder(MatchingOrder order) {
+        validateOrder(order);
+
+        if (order.getType() != OrderType.LIMIT) {
+            throw new IllegalArgumentException(
+                    "Only limit orders can be restored to the order book"
+            );
+        }
+
+        if (order.getTimeInForce() != TimeInForce.GTC) {
+            throw new IllegalArgumentException(
+                    "Only GTC orders can be restored as resting orders"
+            );
+        }
+
+        if (order.getRemainingQuantity().signum() <= 0) {
+            throw new IllegalArgumentException(
+                    "Restored order must have remaining quantity"
+            );
+        }
+
+        if (!seenOrderIds.add(order.getOrderId())) {
+            throw new IllegalArgumentException(
+                    "Duplicate restored order ID: " + order.getOrderId()
+            );
+        }
+
+        if (order.getRemainingQuantity()
+                .compareTo(order.getQuantity()) < 0) {
+            order.setStatus(OrderStatus.PARTIALLY_FILLED);
+        } else {
+            order.setStatus(OrderStatus.NEW);
+        }
+
+        addToOrderBook(order);
+    }
+    public record Checkpoint(
+            String symbol,
+            List<MatchingOrder> restingOrders,
+            Set<UUID> seenOrderIds
+    ) {
+    }
+
+    public Checkpoint checkpoint() {
+        List<MatchingOrder> orders = orderIndex.values()
+                .stream()
+                .map(MatchingOrder::copy)
+                .sorted(
+                        Comparator.comparingLong(
+                                MatchingOrder::getSequenceNumber
+                        )
+                )
+                .toList();
+
+        return new Checkpoint(
+                orderBook.getSymbol(),
+                orders,
+                new HashSet<>(seenOrderIds)
+        );
+    }
+
+    public void restore(Checkpoint checkpoint) {
+        if (checkpoint == null) {
+            throw new IllegalArgumentException(
+                    "Checkpoint cannot be null"
+            );
+        }
+
+        if (!orderBook.getSymbol().equals(checkpoint.symbol())) {
+            throw new IllegalArgumentException(
+                    "Checkpoint belongs to a different market"
+            );
+        }
+
+        orderBook.clear();
+        orderIndex.clear();
+        seenOrderIds.clear();
+
+        seenOrderIds.addAll(checkpoint.seenOrderIds());
+
+        for (MatchingOrder savedOrder : checkpoint.restingOrders()) {
+
+            MatchingOrder restoredOrder = savedOrder.copy();
+
+            orderBook.addOrder(restoredOrder);
+            orderIndex.put(
+                    restoredOrder.getOrderId(),
+                    restoredOrder
+            );
+        }
+    }
+
+
 }

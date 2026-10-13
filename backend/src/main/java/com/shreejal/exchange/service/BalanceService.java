@@ -103,6 +103,40 @@ public class BalanceService {
         balanceRepository.save(balance);
     }
 
+
+    @Transactional
+    public void consumeReserved(
+            Wallet wallet,
+            Asset asset,
+            BigDecimal amount
+    ) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new InvalidAmountException(
+                    "Consumed amount must be greater than zero"
+            );
+        }
+
+        Balance balance = balanceRepository
+                .findByWalletAndAsset(wallet, asset)
+                .orElseThrow(() ->
+                        new BalanceNotFoundException(
+                                "Balance not found for wallet and asset"
+                        )
+                );
+
+        if (balance.getReserved().compareTo(amount) < 0) {
+            throw new InsufficientBalanceException(
+                    "Insufficient reserved balance for settlement"
+            );
+        }
+
+        balance.setReserved(
+                balance.getReserved().subtract(amount)
+        );
+
+        balanceRepository.save(balance);
+    }
+
     @Transactional
     public Balance initialise(Wallet wallet,Asset asset){
         if(wallet==null||asset==null){

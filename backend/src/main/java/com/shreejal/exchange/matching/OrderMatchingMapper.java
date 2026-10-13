@@ -63,4 +63,43 @@ public final class OrderMatchingMapper {
                 order.getId()
         );
     }
+
+    public static MatchingOrder toRestingMatchingOrder(Order order) {
+        if (order == null || order.getId() == null) {
+            throw new IllegalArgumentException(
+                    "A persisted order is required"
+            );
+        }
+
+        if (order.getMatchingId() == null
+                || order.getUser() == null
+                || order.getTradingPair() == null) {
+            throw new IllegalArgumentException(
+                    "Order identity, user, and trading pair are required"
+            );
+        }
+
+        BigDecimal remaining =
+                order.getQuantity().subtract(order.getFilledQuantity());
+
+        if (remaining.signum() <= 0) {
+            throw new IllegalArgumentException(
+                    "A fully filled order cannot be restored"
+            );
+        }
+
+        return new MatchingOrder(
+                order.getUser().getId(),
+                order.getMatchingId(),
+                order.getTradingPair().getSymbol(),
+                OrderSide.valueOf(order.getSide()),
+                OrderType.valueOf(order.getOrderType()),
+                order.getPrice(),
+                order.getQuantity(),
+                remaining,
+                TimeInForce.valueOf(order.getTimeInForce()),
+                order.getId()
+        );
+    }
+
 }

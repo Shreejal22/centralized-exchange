@@ -19,6 +19,7 @@ public class MatchingOrder {
     private final long sequenceNumber;
     private OrderStatus status;
 
+
     public MatchingOrder(
             Long userId,
             UUID orderId,
@@ -30,6 +31,32 @@ public class MatchingOrder {
             TimeInForce timeInForce,
             long sequenceNumber
     ) {
+        this(
+                userId,
+                orderId,
+                symbol,
+                side,
+                type,
+                price,
+                quantity,
+                quantity,
+                timeInForce,
+                sequenceNumber
+        );
+    }
+
+    public MatchingOrder(
+            Long userId,
+            UUID orderId,
+            String symbol,
+            OrderSide side,
+            OrderType type,
+            BigDecimal price,
+            BigDecimal quantity,
+            BigDecimal remainingQuantity,
+            TimeInForce timeInForce,
+            long sequenceNumber
+    ) {
         this.userId = userId;
         this.orderId = orderId;
         this.symbol = symbol;
@@ -37,11 +64,14 @@ public class MatchingOrder {
         this.type = type;
         this.price = price;
         this.quantity = quantity;
-        this.remainingQuantity = quantity;
+        this.remainingQuantity = remainingQuantity;
         this.timeInForce = timeInForce;
         this.sequenceNumber = sequenceNumber;
         this.status = OrderStatus.NEW;
+
+
     }
+
 
     public Long getUserId() {
         return userId;
@@ -121,5 +151,29 @@ public class MatchingOrder {
 
     public void cancelRemainingQuantity() {
         remainingQuantity = BigDecimal.ZERO;
+    }
+    public MatchingOrder copy() {
+        MatchingOrder copy = new MatchingOrder(
+                userId,
+                orderId,
+                symbol,
+                side,
+                type,
+                price,
+                quantity,
+                timeInForce,
+                sequenceNumber
+        );
+
+        BigDecimal filledQuantity =
+                quantity.subtract(remainingQuantity);
+
+        if (filledQuantity.signum() > 0) {
+            copy.reduceRemainingQuantity(filledQuantity);
+        }
+
+        copy.setStatus(status);
+
+        return copy;
     }
 }

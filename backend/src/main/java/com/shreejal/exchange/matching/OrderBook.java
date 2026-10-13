@@ -90,4 +90,8 @@ public class OrderBook {
         return true;
     }
 
+    public void clear() {
+        bids.clear();
+        asks.clear();
+    }
 }

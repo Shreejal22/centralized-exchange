@@ -1,32 +1,29 @@
-
 package com.shreejal.exchange.service;
+
+import com.shreejal.exchange.exception.BalanceNotFoundException;
 import com.shreejal.exchange.exception.InsufficientBalanceException;
 import com.shreejal.exchange.exception.InvalidAmountException;
 import com.shreejal.exchange.model.Asset;
 import com.shreejal.exchange.model.Balance;
 import com.shreejal.exchange.model.Wallet;
 import com.shreejal.exchange.repository.BalanceRepository;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.mockito.ArgumentMatchers.any;
-
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.never;
 import java.math.BigDecimal;
 import java.util.Optional;
-import com.shreejal.exchange.exception.BalanceNotFoundException;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-
-import static org.mockito.ArgumentMatchers.eq;
 
 @ExtendWith(MockitoExtension.class)
 class BalanceServiceTest {
@@ -201,6 +198,91 @@ class BalanceServiceTest {
                         wallet,
                         asset,
                         new BigDecimal("10.0000000000")
+                )
+        );
+
+        verify(balanceRepository, never()).save(balance);
+    }
+    @Test
+    void consumeReservedShouldDeductReservedFunds() {
+
+        when(balanceRepository.findByWalletAndAsset(wallet, asset))
+                .thenReturn(Optional.of(balance));
+
+        when(balance.getReserved())
+                .thenReturn(new BigDecimal("30.0000000000"));
+
+        balanceService.consumeReserved(
+                wallet,
+                asset,
+                new BigDecimal("10.0000000000")
+        );
+
+        verify(balance).setReserved(
+                new BigDecimal("20.0000000000")
+        );
+
+        verify(balance, never()).setAvailable(any(BigDecimal.class));
+        verify(balanceRepository).save(balance);
+    }
+
+    @Test
+    void consumeReservedShouldRejectInsufficientFunds() {
+
+        when(balanceRepository.findByWalletAndAsset(wallet, asset))
+                .thenReturn(Optional.of(balance));
+
+        when(balance.getReserved())
+                .thenReturn(new BigDecimal("5.0000000000"));
+
+        assertThrows(
+                InsufficientBalanceException.class,
+                () -> balanceService.consumeReserved(
+                        wallet,
+                        asset,
+                        new BigDecimal("10.0000000000")
+                )
+        );
+
+        verify(balance, never()).setReserved(any(BigDecimal.class));
+        verify(balanceRepository, never()).save(balance);
+    }
+
+    @Test
+    void consumeReservedShouldRejectInvalidAmounts() {
+
+        BigDecimal[] invalidAmounts = {
+                BigDecimal.ZERO,
+                new BigDecimal("-1"),
+                null
+        };
+
+        for (BigDecimal amount : invalidAmounts) {
+            assertThrows(
+                    InvalidAmountException.class,
+                    () -> balanceService.consumeReserved(
+                            wallet,
+                            asset,
+                            amount
+                    )
+            );
+        }
+
+        verifyNoInteractions(balanceRepository);
+    }
+
+    @Test
+    void consumeReservedShouldThrowWhenBalanceDoesNotExist() {
+
+        when(balanceRepository.findByWalletAndAsset(wallet, asset))
+                .thenReturn(Optional.empty());
+
+        assertThrows(
+                BalanceNotFoundException.class,
+                () -> balanceService.consumeReserved(
+                        wallet,
+                        asset,
+                        new BigDecimal("10")
                 )
         );
 
