@@ -33,7 +33,6 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -78,25 +77,59 @@ public class OrderTransactionService {
     }
 
     @Transactional
-    public void execute(
+    public Order execute(
             PlaceOrderRequest request,
             MatchingEngine engine
     ) {
+        validateRequest(request);
+
+        if (engine == null) {
+            throw new IllegalArgumentException(
+                    "Matching engine cannot be null"
+            );
+        }
+
         User user = userRepository.findByIdForUpdate(
                 request.getUserId()
         ).orElseThrow(() ->
                 new EntityNotFoundException("User not found")
         );
 
-        if (orderRepository
-                .findByUser_IdAndClientOrderId(
-                        user.getId(),
-                        request.getClientOrderId()
-                )
-                .isPresent()) {
-            throw new IllegalArgumentException(
-                    "clientOrderId has already been used"
-            );
+        String clientOrderId = request.getClientOrderId();
+
+        if (clientOrderId != null && !clientOrderId.isBlank()) {
+            var existingOrder = orderRepository
+                    .findByUser_IdAndClientOrderId(
+                            user.getId(),
+                            clientOrderId
+                    );
+
+            if (existingOrder.isPresent()) {
+                Order original = existingOrder.get();
+
+                boolean sameRequest =
+                        original.getTradingPair().getSymbol()
+                                .equals(request.getSymbol())
+                                && original.getSide().equals(
+                                request.getSide().name())
+                                && original.getOrderType().equals(
+                                request.getOrderType().name())
+                                && original.getTimeInForce().equals(
+                                request.getTimeInForce().name())
+                                && original.getQuantity().compareTo(
+                                request.getQuantity()) == 0
+                                && samePrice(
+                                original.getPrice(),
+                                request.getPrice());
+
+                if (!sameRequest) {
+                    throw new IllegalArgumentException(
+                            "clientOrderId was already used with a different order request"
+                    );
+                }
+
+                return original;
+            }
         }
 
         TradingPair pair = tradingPairRepository
@@ -107,8 +140,6 @@ public class OrderTransactionService {
                                         + request.getSymbol()
                         )
                 );
-
-        validateRequest(request);
 
         Wallet wallet = walletService.getOrCreateWallet(
                 user.getId()
@@ -146,7 +177,7 @@ public class OrderTransactionService {
         order.setQuantity(request.getQuantity());
         order.setFilledQuantity(BigDecimal.ZERO);
         order.setStatus("NEW");
-        order.setClientOrderId(request.getClientOrderId());
+        order.setClientOrderId(clientOrderId);
 
         order = orderRepository.saveAndFlush(order);
 
@@ -171,9 +202,10 @@ public class OrderTransactionService {
                 : result.getTrades()) {
 
             BigDecimal quantity = matched.getQuantity();
+            BigDecimal executionPrice = matched.getPrice();
 
             BigDecimal quoteQuantity =
-                    matched.getPrice().multiply(quantity);
+                    executionPrice.multiply(quantity);
 
             Order buyOrder = orderRepository
                     .findByMatchingId(matched.getBuyOrderId())
@@ -213,11 +245,10 @@ public class OrderTransactionService {
             }
 
             Trade persistedTrade = new Trade();
-
             persistedTrade.setTradingPair(pair);
             persistedTrade.setMakerOrder(makerOrder);
             persistedTrade.setTakerOrder(takerOrder);
-            persistedTrade.setPrice(matched.getPrice());
+            persistedTrade.setPrice(executionPrice);
             persistedTrade.setQuantity(quantity);
             persistedTrade.setQuoteQuantity(quoteQuantity);
             persistedTrade.setMakerFeeAmount(BigDecimal.ZERO);
@@ -231,7 +262,7 @@ public class OrderTransactionService {
                     buyOrder,
                     sellOrder,
                     pair,
-                    matched.getPrice(),
+                    executionPrice,
                     quantity,
                     quoteQuantity,
                     persistedTrade.getId()
@@ -240,17 +271,8 @@ public class OrderTransactionService {
             updateFilledOrder(buyOrder, quantity);
             updateFilledOrder(sellOrder, quantity);
 
-            if (order.getMatchingId().equals(
-                    matched.getBuyOrderId())
-                    || order.getMatchingId().equals(
-                    matched.getSellOrderId())) {
-
-                executedQuantity =
-                        executedQuantity.add(quantity);
-
-                totalQuoteSpent =
-                        totalQuoteSpent.add(quoteQuantity);
-            }
+            executedQuantity = executedQuantity.add(quantity);
+            totalQuoteSpent = totalQuoteSpent.add(quoteQuantity);
 
             saveOutboxEvent(
                     "TRADE",
@@ -259,22 +281,32 @@ public class OrderTransactionService {
                     Map.of(
                             "tradeId", persistedTrade.getId(),
                             "pair", pair.getSymbol(),
-                            "price", matched.getPrice(),
+                            "price", executionPrice,
                             "quantity", quantity,
                             "quoteQuantity", quoteQuantity
                     )
             );
         }
 
+        /*
+         * executedQuantity is accumulated from the incoming
+         * order's matched trades. It is the authoritative fill
+         * quantity for this order.
+         */
         order.setFilledQuantity(executedQuantity);
-
         order.setStatus(
                 databaseStatus(result.getOrder().getStatus())
         );
 
-        if ("CANCELED".equals(order.getStatus())
-                || "REJECTED".equals(order.getStatus())) {
-
+        /*
+         * GTC limit orders may remain on the book, so their
+         * unfilled reservation must remain locked.
+         *
+         * IOC/FOK orders must not retain a reservation for an
+         * unfilled remainder. Market orders also cannot rest
+         * on the book in this implementation.
+         */
+        if (shouldReleaseReservation(request, order)) {
             releaseUnfilledReservation(
                     order,
                     wallet,
@@ -285,7 +317,7 @@ public class OrderTransactionService {
             );
         }
 
-        orderRepository.save(order);
+        order = orderRepository.saveAndFlush(order);
 
         saveOutboxEvent(
                 "ORDER",
@@ -298,11 +330,33 @@ public class OrderTransactionService {
                         "filledQuantity", executedQuantity
                 )
         );
+
+        return order;
     }
 
     private void validateRequest(
             PlaceOrderRequest request
     ) {
+        if (request == null) {
+            throw new IllegalArgumentException(
+                    "Order request cannot be null"
+            );
+        }
+
+        if (request.getUserId() == null
+                || request.getUserId() <= 0) {
+            throw new IllegalArgumentException(
+                    "A valid user ID is required"
+            );
+        }
+
+        if (request.getSymbol() == null
+                || request.getSymbol().isBlank()) {
+            throw new IllegalArgumentException(
+                    "Trading pair symbol is required"
+            );
+        }
+
         if (request.getQuantity() == null
                 || request.getQuantity().signum() <= 0) {
             throw new IllegalArgumentException(
@@ -331,6 +385,14 @@ public class OrderTransactionService {
                 && request.getTimeInForce() != TimeInForce.FOK) {
             throw new IllegalArgumentException(
                     "Market orders must use IOC or FOK"
+            );
+        }
+
+        if (request.getOrderType() == OrderType.MARKET
+                && request.getSide() == OrderSide.BUY
+                && request.getPrice() != null) {
+            throw new IllegalArgumentException(
+                    "Market buy orders must not specify a limit price"
             );
         }
     }
@@ -377,7 +439,28 @@ public class OrderTransactionService {
             );
         }
 
+        /*
+         * The market lock must remain held between calculating
+         * this reservation and matching the order. The engine
+         * must execute against the same book state.
+         */
         return totalCost;
+    }
+
+    private boolean shouldReleaseReservation(
+            PlaceOrderRequest request,
+            Order order
+    ) {
+        if ("CANCELED".equals(order.getStatus())
+                || "REJECTED".equals(order.getStatus())) {
+            return true;
+        }
+
+        if (request.getOrderType() == OrderType.MARKET) {
+            return true;
+        }
+
+        return request.getTimeInForce() != TimeInForce.GTC;
     }
 
     private void settleTrade(
@@ -549,10 +632,19 @@ public class OrderTransactionService {
             amountToUnlock = unfilled;
 
         } else if ("LIMIT".equals(order.getOrderType())) {
+            /*
+             * Price improvement for executed quantities has
+             * already been unlocked during settlement.
+             * Only release the reservation for the remainder.
+             */
             amountToUnlock = order.getPrice()
                     .multiply(unfilled);
 
         } else {
+            /*
+             * Market-buy reservation was calculated from the
+             * asks available when the order was submitted.
+             */
             amountToUnlock = originalReservation
                     .subtract(totalQuoteSpent);
         }
@@ -605,5 +697,16 @@ public class OrderTransactionService {
         event.setRetryCount(0);
 
         outboxEventRepository.save(event);
+    }
+
+    private boolean samePrice(
+            BigDecimal first,
+            BigDecimal second
+    ) {
+        if (first == null || second == null) {
+            return first == second;
+        }
+
+        return first.compareTo(second) == 0;
     }
 }

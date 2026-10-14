@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class WalletService {
@@ -27,23 +28,33 @@ public class WalletService {
     }
 
     @Transactional
-    public Wallet getOrCreateWallet(Long userId){
-        if(userId==null||userId<=0){
+    public Wallet getOrCreateWallet(Long userId) {
+        if (userId == null || userId <= 0) {
             throw new IllegalArgumentException("User Id must be positive");
         }
-        return walletRepository.findByUser_Id(userId)
-                .orElseGet(()->{
-                    User user=userRepository.findById(userId)
-                            .orElseThrow(()-> new EntityNotFoundException("User not found"+userId));
 
-                Wallet wallet = new Wallet() ;
-                wallet.setUser(user);
-                Wallet savedWallet=walletRepository.save(wallet);
-                List<Asset> assets=assetRepository.findAll();
-                for( Asset asset:assets){
-                    balanceService.initialise(savedWallet,asset);
-                }
-                return savedWallet;
-                        });
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() ->
+                        new EntityNotFoundException("User not found: " + userId));
+
+        Optional<Wallet> existingWallet =
+                walletRepository.findByUser_Id(userId);
+
+        if (existingWallet.isPresent()) {
+            return existingWallet.get();
+        }
+
+        Wallet wallet = new Wallet();
+        wallet.setUser(user);
+
+        Wallet savedWallet = walletRepository.save(wallet);
+
+        List<Asset> assets = assetRepository.findAll();
+
+        for (Asset asset : assets) {
+            balanceService.initialise(savedWallet, asset);
+        }
+
+        return savedWallet;
     }
 }
